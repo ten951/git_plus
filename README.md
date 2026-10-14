@@ -26,7 +26,7 @@ return result;  yangxingnong · 2026-10-10 11:30:05 · fix: 修复查询逻辑
 3. 按 IDEA 提示重启，打开 Git 仓库中已提交的代码文件，移动光标即可。
 
 需要启用 IDEA 内置 Git 插件，且 Settings → Version Control → Git 中的 Git 可执行文件有效。
-目标 SDK 为 IDEA 2025.3.6.1，插件声明最低版本为 2025.3（build 253）。
+默认编译 SDK 为 IDEA 2025.3.6.1，最低版本为 2025.3（build 253）；另设固定 2026.3 EAP（263.6800.24）构建测试门禁。
 尚未发布到 Marketplace。
 
 ## 构建与测试
@@ -53,3 +53,5 @@ return result;  yangxingnong · 2026-10-10 11:30:05 · fix: 修复查询逻辑
 查询前还原文件的换行符和 BOM；新增、删除主光标会重新定位提示。可见编辑器每分钟重新检查提交状态和时间。
 
 首版不提供设置页或提交跳转。超过 100 万字符的文档、超过 32 MB 的查询输出或单条命令耗时超过 15 秒时不显示提示，以限制后台资源使用。查询使用临时文件传递文档内容与输出，完成或取消后清理。
+
+EAP 验证：用 JBR25 启动 Gradle，并传入 `-PlocalIdePath=/path/to/EAP/Contents`，或 `-PtargetIdeaVersion=263.6800.24`。目标 EAP 的编译/平台测试、静态 API 检查和实际 IDE 运行分别记录。

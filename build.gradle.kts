@@ -12,8 +12,12 @@ dependencies {
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
         val localIde = providers.gradleProperty("localIdePath")
-        if (localIde.isPresent) local(localIde.get()) else intellijIdea("2025.3.6.1")
+        val targetIde = providers.gradleProperty("targetIdeaVersion").orElse("2025.3.6.1")
+        if (localIde.isPresent) local(localIde.get()) else intellijIdea(targetIde.get()) {
+            useInstaller = !targetIde.get().startsWith("263.")
+        }
         bundledPlugin("Git4Idea")
+        bundledModule("intellij.platform.vcs.dvcs")
         testFramework(TestFrameworkType.Platform)
     }
 }
