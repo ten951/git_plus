@@ -1,19 +1,18 @@
 <!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
     <id>com.github.ten951.gitplus</id>
-    <name>git_plus</name>
+    <name>Git Plus</name>
     <vendor>ten951</vendor>
     <description><![CDATA[
-        <p><b>git_plus</b> is a repository that provides a pure template to make it easier to create a new plugin project.</p>
-        <p>The main goal of this template is to speed up the setup phase of plugin development for both new and experienced developers by preconfiguring the project scaffold and CI, linking to the proper documentation pages, and keeping everything organized.</p>
+        <p>Show Git blame at the end of the current caret line: author, commit time and commit summary.</p>
+        <p>Recent commits use relative time; commits older than three days show yyyy-MM-dd HH:mm:ss. Local changes show 尚未提交.</p>
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
 
-    <resource-bundle>messages.MyBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <toolWindow factoryClass="com.github.ten951.gitplus.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
-        <postStartupActivity implementation="com.github.ten951.gitplus.startup.MyProjectActivity" />
+        <postStartupActivity implementation="com.github.ten951.gitplus.startup.CurrentLineBlameActivity" />
     </extensions>
 </idea-plugin>

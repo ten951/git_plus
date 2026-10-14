@@ -1,45 +1,55 @@
-# git_plus
+# Git Plus
 
-![Build](https://github.com/ten951/git_plus/workflows/Build/badge.svg)
-[![Version](https://img.shields.io/jetbrains/plugin/v/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
-[![Downloads](https://img.shields.io/jetbrains/plugin/d/MARKETPLACE_ID.svg)](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID)
+IntelliJ IDEA 插件：在主光标所在行的末尾自动显示 Git Blame 信息。
 
-## Template ToDo list
-- [x] Create a new [IntelliJ Platform Plugin Template][template] project.
-- [ ] Get familiar with the [template documentation][template].
-- [ ] Adjust the [group](./gradle.properties), as well as the [id](./src/main/resources/META-INF/plugin.xml), [name](./src/main/resources/META-INF/plugin.xml), and [sources package](./src/main/kotlin).
-- [ ] Adjust the plugin [description](./src/main/resources/META-INF/plugin.xml) (see [Tips][docs:plugin-description]) and this README to describe what your plugin does.
-- [ ] Review the [Legal Agreements](https://plugins.jetbrains.com/docs/marketplace/legal-agreements.html?from=IJPluginTemplate).
-- [ ] [Publish a plugin manually](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html?from=IJPluginTemplate) for the first time.
-- [ ] Set the `MARKETPLACE_ID` in the above README badges. You can obtain it once the plugin is published to JetBrains Marketplace.
-- [ ] Set the [Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html?from=IJPluginTemplate) related [secrets](https://github.com/JetBrains/intellij-platform-plugin-template#environment-variables).
-- [ ] Set the [Deployment Token](https://plugins.jetbrains.com/docs/marketplace/plugin-upload.html?from=IJPluginTemplate).
-- [ ] Click the <kbd>Watch</kbd> button on the top of the [IntelliJ Platform Plugin Template][template] to be notified about releases containing new features and fixes.
+```java
+return result;  yangxingnong · 2天前 · fix: 修复查询逻辑
+return result;  yangxingnong · 2026-10-10 11:30:05 · fix: 修复查询逻辑
+```
 
-This Fancy IntelliJ Platform Plugin is going to be your implementation of the brilliant ideas that you have.
+提示使用随主题变化的灰色虚拟文字，不修改源码，也不会进入复制内容或 Git diff。
 
-## Installation
+## 行为
 
-- Using the IDE built-in plugin system:
+- 仅在普通代码编辑器的主光标所在行显示，换行后更新。
+- 提交距当前时间不超过 72 小时（含边界）显示相对时间；超过后显示 `yyyy-MM-dd HH:mm:ss`。
+- 作者使用 Git 作者名；时间使用提交的 committer 时间，并按本机时区展示。
+- 提交说明只显示第一行。未保存、未提交或已暂存的修改行显示“尚未提交”。
+- 文件其他行发生插入、删除或修改时，未修改行仍保留其提交归属。
+- 非 Git、未跟踪、无提交仓库及二进制文件不显示提示；查询失败安静隐藏，诊断记录到 IDE debug 日志。
+- 光标变化采用 150ms 防抖，Git 查询在后台执行，过期结果丢弃。
 
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>Marketplace</kbd> > <kbd>Search for "git_plus"</kbd> >
-  <kbd>Install</kbd>
+## 安装
 
-- Using JetBrains Marketplace:
+1. 下载或构建 `build/distributions/git_plus-0.0.1.zip`。
+2. IDEA 的 Settings / Preferences → Plugins → 齿轮菜单 → Install Plugin from Disk，选择 ZIP。
+3. 按 IDEA 提示重启，打开 Git 仓库中已提交的代码文件，移动光标即可。
 
-  Go to [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID) and install it by clicking the <kbd>Install to ...</kbd> button in case your IDE is running.
+需要启用 IDEA 内置 Git 插件，且 Settings → Version Control → Git 中的 Git 可执行文件有效。
+目标 SDK 为 IDEA 2025.3.6.1，插件声明最低版本为 2025.3（build 253）。
+尚未发布到 Marketplace。
 
-  You can also download the [latest release](https://plugins.jetbrains.com/plugin/MARKETPLACE_ID/versions) from JetBrains Marketplace and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+## 构建与测试
 
-- Manually:
+需要 JDK 21。首次构建会下载 Gradle、IDEA SDK 和测试依赖。
 
-  Download the [latest release](https://github.com/ten951/git_plus/releases/latest) and install it manually using
-  <kbd>Settings/Preferences</kbd> > <kbd>Plugins</kbd> > <kbd>⚙️</kbd> > <kbd>Install plugin from disk...</kbd>
+```sh
+./gradlew test
+./gradlew buildPlugin verifyPluginStructure
+./gradlew verifyPlugin -PverificationIdePath=/path/to/IDE/Contents
+./gradlew runIde
+```
 
+`runIde` 启动独立沙盒 IDEA。可通过 `-PlocalIdePath=/path/to/IDE/Contents` 使用本地 SDK；默认仍使用 2025.3.6.1。
 
----
-Plugin based on the [IntelliJ Platform Plugin Template][template].
+测试包含时间边界、真实临时 Git 仓库、未保存编辑、暂存改动、HEAD 变化、非 UTF-8 文件、编辑器状态和异步刷新。测试中的提交仅发生在临时仓库。
 
-[template]: https://github.com/JetBrains/intellij-platform-plugin-template
-[docs:plugin-description]: https://plugins.jetbrains.com/docs/intellij/plugin-user-experience.html#plugin-description-and-presentation
+`verifyPlugin` 可通过 `verificationIdePath` 复用本地 IDE 做 API 兼容性检查；未指定时下载推荐的验证版本。
+
+## 实现与限制
+
+通过 Git `blame --line-porcelain --contents -` 对当前文档快照查询归属，避免自行推测编辑后的行号；所有 Git 查询均为只读操作。查询缓存最多保留四个快照，以文件、HEAD、索引状态、内容和字符集区分，并在相关事件后失效。
+
+查询前还原文件的换行符和 BOM；新增、删除主光标会重新定位提示。可见编辑器每分钟重新检查提交状态和时间。
+
+首版不提供设置页或提交跳转。超过 100 万字符的文档、超过 32 MB 的查询输出或单条命令耗时超过 15 秒时不显示提示，以限制后台资源使用。查询使用临时文件传递文档内容与输出，完成或取消后清理。
