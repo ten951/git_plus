@@ -16,6 +16,7 @@ class EditorBlameState(private val editor: Editor, parent: Disposable, private v
     private var generation = 0L
     private var disposed = false
     private var inlay: Inlay<BlameInlayRenderer>? = null
+    private var attribution: BlameLine? = null
     private var primaryLine = editor.caretModel.primaryCaret.logicalPosition.line
 
     init {
@@ -40,11 +41,11 @@ class EditorBlameState(private val editor: Editor, parent: Disposable, private v
         }
     }
 
-    fun invalidate() {
+    fun invalidate(notifyChange: Boolean = true) {
         if (disposed) return
         generation++
         clearHint()
-        changed()
+        if (notifyChange) changed()
     }
 
     fun beginRequest(): Ticket {
@@ -58,6 +59,7 @@ class EditorBlameState(private val editor: Editor, parent: Disposable, private v
             ticket.stamp != editor.document.modificationStamp || ticket.line != editor.caretModel.primaryCaret.logicalPosition.line) return
         clearHint()
         val text = line?.presentation() ?: return
+        attribution = line
         if (ticket.line >= editor.document.lineCount) return
         inlay = editor.inlayModel.addAfterLineEndElement(editor.document.getLineEndOffset(ticket.line), true, BlameInlayRenderer(text))
     }
@@ -65,6 +67,14 @@ class EditorBlameState(private val editor: Editor, parent: Disposable, private v
     private fun clearHint() {
         inlay?.let(Disposer::dispose)
         inlay = null
+        attribution = null
+    }
+
+    fun updatePresentation() {
+        val hint = inlay ?: return
+        hint.renderer.text = attribution?.presentation() ?: return
+        hint.update()
+        editor.contentComponent.repaint()
     }
 
     override fun dispose() {

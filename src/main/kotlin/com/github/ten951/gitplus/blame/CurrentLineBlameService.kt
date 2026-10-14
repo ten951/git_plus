@@ -13,13 +13,20 @@ import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.event.EditorFactoryEvent
 import com.intellij.openapi.editor.event.EditorFactoryListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManagerListener
+import com.intellij.openapi.fileEditor.FileEditorManagerEvent
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileMoveEvent
+import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileCreateEvent
 import git4idea.config.GitExecutableManager
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryChangeListener
+import git4idea.repo.GitRepositoryManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +42,9 @@ import java.nio.file.Path
 class CurrentLineBlameService(private val project: Project, private val scope: CoroutineScope) : Disposable {
     private val sessions = mutableMapOf<Editor, Session>()
     private var started = false
+    private val pendingChanges = mutableListOf<ChangedPath>()
+    private val pendingRoots = mutableSetOf<Path>()
+    private var refreshJob: Job? = null
 
     fun start() {
         if (started || project.isDisposed) return
@@ -47,13 +57,31 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
             }
         }, this)
         factory.allEditors.forEach(::attach)
-        project.messageBus.connect(this).subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener { refresh() })
+        project.messageBus.connect(this).subscribe(GitRepository.GIT_REPO_CHANGE, GitRepositoryChangeListener {
+            enqueueRefresh(emptyList(), Path.of(it.root.path))
+        })
+        project.messageBus.connect(this).subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
+            override fun selectionChanged(event: FileEditorManagerEvent) {
+                (event.oldEditor as? TextEditor)?.editor?.let { sessions[it]?.deactivate() }
+                (event.newEditor as? TextEditor)?.editor?.let { sessions[it]?.activate() }
+            }
+        })
         val connection = ApplicationManager.getApplication().messageBus.connect(this)
-        connection.subscribe(EditorColorsManager.TOPIC, EditorColorsListener { refresh() })
+        connection.subscribe(EditorColorsManager.TOPIC, EditorColorsListener {
+            scope.launch(Dispatchers.EDT) { sessions.values.forEach { it.repaint() } }
+        })
         connection.subscribe(com.intellij.openapi.vfs.VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
             override fun after(events: List<VFileEvent>) {
-                // HEAD, refs, index, external file edits and checkout operations all invalidate cached ownership.
-                if (events.isNotEmpty()) refresh()
+                val paths = events.flatMap { event ->
+                    val directory = event.file?.isDirectory == true || event is VFileCreateEvent && event.isDirectory
+                    val oldPath = when (event) {
+                        is VFileMoveEvent -> event.oldPath
+                        is VFilePropertyChangeEvent -> event.oldPath
+                        else -> null
+                    }
+                    listOfNotNull(event.path, oldPath).distinct().map { ChangedPath(Path.of(it), directory) }
+                }
+                if (paths.isNotEmpty()) enqueueRefresh(paths)
             }
         })
     }
@@ -65,9 +93,19 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         session.schedule()
     }
 
-    private fun refresh() {
+    private fun enqueueRefresh(changes: List<ChangedPath>, root: Path? = null) {
         scope.launch(Dispatchers.EDT) {
-            sessions.values.forEach { it.refresh() }
+            pendingChanges.addAll(changes)
+            root?.let(pendingRoots::add)
+            refreshJob?.cancel()
+            refreshJob = scope.launch(Dispatchers.EDT) {
+                delay(50)
+                val batch = pendingChanges.toList()
+                val roots = pendingRoots.toSet()
+                pendingChanges.clear()
+                pendingRoots.clear()
+                sessions.values.forEach { if (it.affected(batch, roots)) it.refresh() }
+            }
         }
     }
 
@@ -76,6 +114,8 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         private var closed = false
         private var provider: BlameProvider? = null
         private var executable: String? = null
+        private var dirty = false
+        private var active = false
         private val state: EditorBlameState
         private val periodicRefresh: Job
 
@@ -85,19 +125,37 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
             periodicRefresh = scope.launch(Dispatchers.EDT) {
                 while (isActive) {
                     delay(60_000)
-                    if (!closed && !editor.isDisposed && editor.contentComponent.isShowing) schedule()
+                    if (!closed && !editor.isDisposed && (active || editor.contentComponent.isShowing)) schedule()
                 }
             }
         }
 
         fun refresh() {
             provider?.clearCache()
-            state.invalidate()
+            request?.cancel()
+            dirty = true
+            state.invalidate(false)
+            if (active || editor.contentComponent.isShowing) schedule()
         }
+
+        fun affected(changes: List<ChangedPath>, roots: Set<Path>): Boolean {
+            val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return false
+            val repository = GitRepositoryManager.getInstance(project).getRepositoryForFileQuick(file)
+            val paths = repository?.let {
+                RepositoryPaths(Path.of(it.root.path), it.repositoryFiles.headFile.parentFile.toPath(),
+                    it.repositoryFiles.refsHeadsFile.parentFile.parentFile.toPath())
+            }
+            return paths?.root in roots || BlameRefreshScope.affects(Path.of(file.path), paths, changes)
+        }
+
+        fun activate() { active = true; if (dirty) schedule() else state.updatePresentation() }
+        fun deactivate() { active = false }
+        fun repaint() = state.updatePresentation()
 
         fun schedule() {
             request?.cancel()
             if (closed) return
+            dirty = false
             request = scope.launch(Dispatchers.EDT) {
                 delay(150)
                 if (closed || editor.isDisposed) return@launch
@@ -140,7 +198,12 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         }
     }
 
-    override fun dispose() { sessions.clear() }
+    override fun dispose() {
+        refreshJob?.cancel()
+        pendingChanges.clear()
+        pendingRoots.clear()
+        sessions.clear()
+    }
 
     companion object { private val LOG = logger<CurrentLineBlameService>() }
 }

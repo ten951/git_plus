@@ -36,6 +36,11 @@ class CurrentLineBlameServiceTest : BasePlatformTestCase() {
         val service = project.service<CurrentLineBlameService>()
         try {
             service.start()
+            val textEditor = com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance().getTextEditor(editor)
+            project.messageBus.syncPublisher(com.intellij.openapi.fileEditor.FileEditorManagerListener.FILE_EDITOR_MANAGER)
+                .selectionChanged(com.intellij.openapi.fileEditor.FileEditorManagerEvent(
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project), null, null, null, file, textEditor,
+                    com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance()))
             waitForHint("integration author")
             editor.caretModel.moveToOffset(6)
             waitForHint("integration commit")
