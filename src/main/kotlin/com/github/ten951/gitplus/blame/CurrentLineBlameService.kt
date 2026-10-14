@@ -45,6 +45,19 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
     private val pendingChanges = mutableListOf<ChangedPath>()
     private val pendingRoots = mutableSetOf<Path>()
     private var refreshJob: Job? = null
+    private class QuerySource(val provider: BlameProvider, val coordinator: BlameQueryCoordinator)
+    private val sources = mutableMapOf<String, QuerySource>() // EDT confined; one cache per configured executable.
+
+    private fun source(executable: String): QuerySource = sources.getOrPut(executable) {
+        val provider = BlameProvider(executable) { LOG.debug(it) }
+        QuerySource(provider, BlameQueryCoordinator(scope) { request ->
+            val job = kotlinx.coroutines.currentCoroutineContext()[Job]!!
+            withContext(Dispatchers.IO) {
+                if (provider.generationOf(request.file) != request.generation) throw CancellationException("Snapshot invalidated")
+                provider.query(request.file, request.content, request.charset, request.separator, request.bom.toByteArray()) { job.ensureActive() }
+            }
+        })
+    }
 
     fun start() {
         if (started || project.isDisposed) return
@@ -112,8 +125,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
     private inner class Session(private val editor: Editor) : Disposable {
         private var request: Job? = null
         private var closed = false
-        private var provider: BlameProvider? = null
-        private var executable: String? = null
+        private var querySource: QuerySource? = null
         private var dirty = false
         private var active = false
         private val state: EditorBlameState
@@ -131,7 +143,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         }
 
         fun refresh() {
-            provider?.clearCache()
+            FileDocumentManager.getInstance().getFile(editor.document)?.let { querySource?.provider?.invalidateFile(Path.of(it.path)) }
             request?.cancel()
             dirty = true
             state.invalidate(false)
@@ -144,7 +156,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
             val paths = repository?.let {
                 RepositoryPaths(Path.of(it.root.path), it.repositoryFiles.headFile.parentFile.toPath(),
                     it.repositoryFiles.refsHeadsFile.parentFile.parentFile.toPath())
-            }
+            } ?: querySource?.provider?.repositoryPaths(Path.of(file.path))
             return paths?.root in roots || BlameRefreshScope.affects(Path.of(file.path), paths, changes)
         }
 
@@ -168,16 +180,12 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
                 val separator = FileDocumentManager.getInstance().getLineSeparator(file, project)
                 val bom = file.bom?.clone()
                 try {
-                    val job = coroutineContext[Job]!!
-                    val result = withContext(Dispatchers.IO) {
-                        val git = GitExecutableManager.getInstance().getPathToGit(project)
-                        if (executable != git || provider == null) {
-                            executable = git
-                            provider = BlameProvider(git) { LOG.debug(it) }
-                        }
-                        // The cancellation check belongs to this request, not the job that first populated the cache.
-                        val query = provider!!
-                        query.query(path, content, charset, separator, bom) { job.ensureActive() }
+                    val git = withContext(Dispatchers.IO) { GitExecutableManager.getInstance().getPathToGit(project) }
+                    val selected = source(git)
+                    querySource = selected
+                    val snapshot = BlameRequest(path, content, charset, separator, bom?.toList().orEmpty(), selected.provider.generationOf(path))
+                    val result = withContext(Dispatchers.Default) {
+                        selected.coordinator.query(snapshot)
                     }
                     ensureActive()
                     if (!closed && FileDocumentManager.getInstance().getFile(editor.document) == file) state.publish(ticket, result[ticket.line])
@@ -194,7 +202,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
             closed = true
             request?.cancel()
             periodicRefresh.cancel()
-            provider?.clearCache()
+            querySource = null
         }
     }
 
@@ -203,6 +211,8 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         pendingChanges.clear()
         pendingRoots.clear()
         sessions.clear()
+        sources.values.forEach { it.provider.clearCache() }
+        sources.clear()
     }
 
     companion object { private val LOG = logger<CurrentLineBlameService>() }
