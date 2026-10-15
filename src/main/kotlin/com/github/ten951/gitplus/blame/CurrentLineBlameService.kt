@@ -192,7 +192,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
                 val separator = FileDocumentManager.getInstance().getLineSeparator(file, project)
                 val bom = file.bom?.clone()
                 try {
-                    val git = withContext(Dispatchers.IO) { GitExecutableManager.getInstance().getPathToGit(project) }
+                    val git = withContext(Dispatchers .IO) { GitExecutableManager.getInstance().getPathToGit(project) }
                     val selected = source(git)
                     querySource = selected
                     val snapshot = BlameRequest(path, content, charset, separator, bom?.toList().orEmpty(), selected.provider.generationOf(path))
