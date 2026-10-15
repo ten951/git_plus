@@ -33,13 +33,19 @@ class BlameProvider(private val executable: String = "git", private val onFailur
 
     private sealed interface Prepared
     private class Cached(val result: Map<Int, BlameLine>) : Prepared
-    private class Raw(val key: CacheKey, val state: RepositoryStateCache.State, val output: String) : Prepared
+    private class Pending(val key: CacheKey, val state: RepositoryStateCache.State) : Prepared
 
     fun query(file: Path, content: String, charset: Charset = Charsets.UTF_8, lineSeparator: String = "\n",
               bom: ByteArray? = null, checkCanceled: () -> Unit = {}): Map<Int, BlameLine> = try {
         when (val prepared = prepare(file, content, charset, lineSeparator, bom, checkCanceled)) {
             is Cached -> prepared.result
-            is Raw -> finish(prepared, parseBlame(prepared.output, checkCanceled), checkCanceled)
+            is Pending -> {
+                val key = prepared.key
+                val bytes = DocumentSnapshotEncoder.encode(DocumentSnapshotEncoder.read(key.file), key.content, key.charset,
+                    key.separator, key.bom.toByteArray(), checkCanceled)
+                val output = blame(prepared, bytes, checkCanceled)
+                if (output == null) emptyMap() else finish(prepared, parseBlame(output, checkCanceled), checkCanceled)
+            }
         }
     } catch (exception: IOException) { onFailure(exception.message.orEmpty()); emptyMap() }
 
@@ -49,8 +55,15 @@ class BlameProvider(private val executable: String = "git", private val onFailur
         }
         when (prepared) {
             is Cached -> prepared.result
-            is Raw -> {
-                val parsed = withContext(Dispatchers.Default) { parseBlame(prepared.output, checkCanceled) }
+            is Pending -> {
+                val key = prepared.key
+                val disk = withContext(Dispatchers.IO) { DocumentSnapshotEncoder.read(key.file) }
+                val bytes = withContext(Dispatchers.Default) {
+                    DocumentSnapshotEncoder.encode(disk, key.content, key.charset, key.separator, key.bom.toByteArray(), checkCanceled)
+                }
+                val output = withContext(Dispatchers.IO) { blame(prepared, bytes, checkCanceled) }
+                    ?: return emptyMap()
+                val parsed = withContext(Dispatchers.Default) { parseBlame(output, checkCanceled) }
                 withContext(Dispatchers.IO) { finish(prepared, parsed, checkCanceled) }
             }
         }
@@ -69,15 +82,17 @@ class BlameProvider(private val executable: String = "git", private val onFailur
         val tracked = runner.run(directory, listOf("--literal-pathspecs", "ls-files", "--error-unmatch", "--", path.fileName.toString()), checkCanceled = checkCanceled)
             ?: return Cached(emptyMap())
         if (tracked.isEmpty()) return Cached(emptyMap())
-        val encoded = content.replace("\n", lineSeparator).toByteArray(charset)
-        val bytes = if (bom != null && !encoded.take(bom.size).toByteArray().contentEquals(bom)) bom + encoded else encoded
-        val output = runner.run(directory, listOf("-c", "blame.blankBoundary=false", "-c", "blame.ignoreRevsFile=",
-            "-c", "i18n.logOutputEncoding=UTF-8", "blame", "--line-porcelain", "--encoding=UTF-8",
-            "--contents", "-", "--", path.fileName.toString()), bytes, checkCanceled) ?: return Cached(emptyMap())
-        return Raw(key, state, output)
+        return Pending(key, state)
     }
 
-    private fun finish(raw: Raw, result: Map<Int, BlameLine>, checkCanceled: () -> Unit): Map<Int, BlameLine> {
+    private fun blame(pending: Pending, bytes: ByteArray, checkCanceled: () -> Unit): String? {
+        val path = pending.key.file
+        return runner.run(path.parent, listOf("-c", "blame.blankBoundary=false", "-c", "blame.ignoreRevsFile=",
+            "-c", "i18n.logOutputEncoding=UTF-8", "blame", "--line-porcelain", "--encoding=UTF-8",
+            "--contents", "-", "--", path.fileName.toString()), bytes, checkCanceled)
+    }
+
+    private fun finish(raw: Pending, result: Map<Int, BlameLine>, checkCanceled: () -> Unit): Map<Int, BlameLine> {
         checkCanceled()
         if (!repositories.isCurrent(raw.state) || fileSignature(raw.key.file) != raw.key.disk) return emptyMap()
         synchronized(cache) {
