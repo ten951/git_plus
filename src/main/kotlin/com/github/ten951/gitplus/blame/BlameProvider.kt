@@ -77,7 +77,7 @@ class BlameProvider(private val executable: String = "git", private val onFailur
         val directory = path.parent ?: return Cached(emptyMap())
         val generation = generationOf(path)
         val state = repositories.state(directory, checkCanceled) ?: return Cached(emptyMap())
-        val key = CacheKey(path, state.head, state.fingerprint, fileSignature(path), content, charset, lineSeparator, bom?.toList().orEmpty(), generation)
+        val key = CacheKey(path, state.head, state.fingerprint + attributesSignature(path, state.paths), fileSignature(path), content, charset, lineSeparator, bom?.toList().orEmpty(), generation)
         synchronized(cache) { cache[key] }?.let { return Cached(it) }
         val tracked = runner.run(directory, listOf("--literal-pathspecs", "ls-files", "--error-unmatch", "--", path.fileName.toString()), checkCanceled = checkCanceled)
             ?: return Cached(emptyMap())
@@ -95,6 +95,7 @@ class BlameProvider(private val executable: String = "git", private val onFailur
     private fun finish(raw: Pending, result: Map<Int, BlameLine>, checkCanceled: () -> Unit): Map<Int, BlameLine> {
         checkCanceled()
         if (!repositories.isCurrent(raw.state) || fileSignature(raw.key.file) != raw.key.disk) return emptyMap()
+        if (raw.state.fingerprint + attributesSignature(raw.key.file, raw.state.paths) != raw.key.metadata) return emptyMap()
         synchronized(cache) {
             if (generationOf(raw.key.file) != raw.key.generation) throw CancellationException("Blame snapshot invalidated")
             if (result.size <= 100_000) {
