@@ -10,7 +10,8 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.util.Disposer
 
 /** UI-thread state. A request may only paint the exact editor/document/line it captured. */
-class EditorBlameState(private val editor: Editor, parent: Disposable, private val changed: () -> Unit) : Disposable {
+class EditorBlameState(private val editor: Editor, parent: Disposable,
+                       private val onHintCleared: () -> Unit = {}, private val changed: () -> Unit) : Disposable {
     class Ticket internal constructor(val editor: Editor, val generation: Long, val stamp: Long, val line: Int)
 
     private var generation = 0L
@@ -65,10 +66,20 @@ class EditorBlameState(private val editor: Editor, parent: Disposable, private v
     }
 
     private fun clearHint() {
+        onHintCleared()
         inlay?.let(Disposer::dispose)
         inlay = null
         attribution = null
     }
+
+    internal fun hoverTarget(point: java.awt.Point): BlameHoverTarget? {
+        val hint = inlay ?: return null
+        val line = attribution ?: return null
+        return if (hint.isValid && hint.bounds?.contains(point) == true) BlameHoverTarget(hint, line) else null
+    }
+
+    internal fun isCurrent(target: BlameHoverTarget): Boolean =
+        !disposed && !editor.isDisposed && inlay === target.inlay && target.inlay.isValid && attribution === target.line
 
     fun updatePresentation() {
         val hint = inlay ?: return

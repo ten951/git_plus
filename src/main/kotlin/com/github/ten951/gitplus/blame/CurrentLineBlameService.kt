@@ -45,7 +45,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
     private val pendingChanges = mutableListOf<ChangedPath>()
     private val pendingRoots = mutableSetOf<Path>()
     private var refreshJob: Job? = null
-    private class QuerySource(val provider: BlameProvider, val coordinator: BlameQueryCoordinator)
+    private class QuerySource(val provider: BlameProvider, val coordinator: BlameQueryCoordinator, val details: CommitDetailsProvider)
     private val sources = mutableMapOf<String, QuerySource>() // EDT confined; one cache per configured executable.
 
     private fun source(executable: String): QuerySource = sources.getOrPut(executable) {
@@ -54,7 +54,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
             val job = kotlinx.coroutines.currentCoroutineContext()[Job]!!
             if (provider.generationOf(request.file) != request.generation) throw CancellationException("Snapshot invalidated")
             provider.queryAsync(request) { job.ensureActive() }
-        })
+        }, CommitDetailsProvider(scope, executable) { LOG.debug(it) })
     }
 
     fun start() {
@@ -127,11 +127,18 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         private var dirty = false
         private var active = false
         private val state: EditorBlameState
+        private var hover: BlameHoverController? = null
         private val periodicRefresh: Job
 
         init {
             Disposer.register(this@CurrentLineBlameService, this)
-            state = EditorBlameState(editor, this) { schedule() }
+            state = EditorBlameState(editor, this, { hover?.dismiss() }) { schedule() }
+            hover = BlameHoverController(editor, state, scope, this, { commit ->
+                val selected = querySource
+                val file = FileDocumentManager.getInstance().getFile(editor.document)
+                val repository = file?.let { selected?.provider?.repositoryPaths(Path.of(it.path)) }
+                if (selected != null && repository != null) selected.details.message(repository, commit.revision) else null
+            })
             periodicRefresh = scope.launch(Dispatchers.EDT) {
                 while (isActive) {
                     delay(60_000)
@@ -141,7 +148,13 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         }
 
         fun refresh() {
-            FileDocumentManager.getInstance().getFile(editor.document)?.let { querySource?.provider?.invalidateFile(Path.of(it.path)) }
+            FileDocumentManager.getInstance().getFile(editor.document)?.let {
+                val path = Path.of(it.path)
+                querySource?.let { selected ->
+                    selected.provider.repositoryPaths(path)?.let(selected.details::invalidate)
+                    selected.provider.invalidateFile(path)
+                }
+            }
             request?.cancel()
             dirty = true
             state.invalidate(false)
@@ -160,6 +173,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
 
         fun activate() { active = true; if (dirty) schedule() else state.updatePresentation() }
         fun deactivate() {
+            hover?.dismiss()
             active = false
             if (!editor.contentComponent.isShowing) {
                 request?.cancel()
@@ -212,6 +226,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
 
         override fun dispose() {
             closed = true
+            hover?.dismiss()
             request?.cancel()
             periodicRefresh.cancel()
             querySource = null
@@ -223,7 +238,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         pendingChanges.clear()
         pendingRoots.clear()
         sessions.clear()
-        sources.values.forEach { it.provider.clearCache() }
+        sources.values.forEach { it.provider.clearCache(); it.details.invalidate() }
         sources.clear()
     }
 
