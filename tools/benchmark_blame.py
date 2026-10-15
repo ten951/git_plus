@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare archived V1 and built V1.1 without changing this checkout or Git config.
+"""Compare archived V1 and built current version without changing this checkout or Git config.
 
 Prerequisites: ./gradlew classes, cached Kotlin 2.4.20 compiler, matching local SDK.
 Example: python3 tools/benchmark_blame.py --ide '/path/IDE.app/Contents' --java-home '/path/jbr/Contents/Home'
@@ -22,6 +22,8 @@ def main():
     parser.add_argument('--java-home', type=Path, required=True)
     parser.add_argument('--baseline', default='14fd064')
     parser.add_argument('--runs', type=int, default=3)
+    parser.add_argument('--label', default='V1.2')
+    parser.add_argument('--report', default='v12-benchmark.json')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     build = root / 'build'
@@ -61,7 +63,7 @@ def main():
                         '-d', str(old_classes), str(old_src)], check=True)
         subprocess.run([javac, '-cp', str(main_classes) + os.pathsep + deps, '-d', str(probe), str(root / 'tools/BlameBenchmark.java')], check=True)
         for run in range(args.runs):
-            for label, implementation in [('V1', old_classes), ('V1.1', main_classes)]:
+            for label, implementation in [('V1', old_classes), (args.label, main_classes)]:
                 repo = work / f'repo-{run}-{label}'
                 repo.mkdir()
                 subprocess.run([git, 'init', '-q', str(repo)], check=True, env=env)
@@ -79,7 +81,7 @@ def main():
                 sample = dict(json.loads(output), revision=label, run=run + 1)
                 results['runs'].append(sample)
                 print(json.dumps(sample), flush=True)
-    report = build / 'reports/v11-benchmark.json'
+    report = build / 'reports' / args.report
     report.parent.mkdir(exist_ok=True)
     report.write_text(json.dumps(results, indent=2) + '\n')
     print(f'Report: {report}')

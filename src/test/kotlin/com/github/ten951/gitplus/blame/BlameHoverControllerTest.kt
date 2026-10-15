@@ -77,6 +77,22 @@ class BlameHoverControllerTest : BasePlatformTestCase() {
         }
     }
 
+    fun testEditorMouseMotionHitsOnlyTheCurrentInlay() {
+        runHoverTest { state, _, views, _ ->
+            val line = BlameLine(BlameCommit("d".repeat(40), "author", Instant.now(), "subject"))
+            state.publish(state.beginRequest(), line)
+            val bounds = hints().single().bounds!!
+            val point = java.awt.Point(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+            assertNotNull(state.hoverTarget(point))
+            assertNull(state.hoverTarget(java.awt.Point(bounds.x + bounds.width + 1, point.y)))
+            myFixture.editor.contentComponent.dispatchEvent(java.awt.event.MouseEvent(
+                myFixture.editor.contentComponent, java.awt.event.MouseEvent.MOUSE_MOVED,
+                System.currentTimeMillis(), 0, point.x, point.y, 0, false))
+            waitUntil { views.lastOrNull()?.text?.contains("完整正文") == true }
+            assertEquals(1, views.size)
+        }
+    }
+
     fun testLateCompletionCannotReplaceNewTarget() {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
