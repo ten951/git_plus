@@ -10,6 +10,8 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
+    <!-- VCS was extracted from the core platform in 263. Keep 253, where this plugin ID is absent. -->
+    <depends optional="true" config-file="git-plus-vcs.xml">com.intellij.platform.vcs</depends>
 
 
     <extensions defaultExtensionNs="com.intellij">
