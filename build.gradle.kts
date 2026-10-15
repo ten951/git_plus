@@ -18,6 +18,7 @@ dependencies {
         }
         bundledPlugin("Git4Idea")
         bundledModule("intellij.platform.vcs.dvcs")
+        bundledModule("intellij.platform.vcs.dvcs.impl")
         testFramework(TestFrameworkType.Platform)
     }
 }

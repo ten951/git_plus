@@ -159,16 +159,30 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         }
 
         fun activate() { active = true; if (dirty) schedule() else state.updatePresentation() }
-        fun deactivate() { active = false }
+        fun deactivate() {
+            active = false
+            if (!editor.contentComponent.isShowing) {
+                request?.cancel()
+                dirty = true
+            }
+        }
         fun repaint() = state.updatePresentation()
 
         fun schedule() {
             request?.cancel()
             if (closed) return
+            if (!active && !editor.contentComponent.isShowing) {
+                dirty = true
+                return
+            }
             dirty = false
             request = scope.launch(Dispatchers.EDT) {
                 delay(150)
                 if (closed || editor.isDisposed) return@launch
+                if (!active && !editor.contentComponent.isShowing) {
+                    dirty = true
+                    return@launch
+                }
                 val ticket = state.beginRequest()
                 val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return@launch
                 if (!file.isValid || !file.isInLocalFileSystem || file.fileType.isBinary || editor.document.textLength > 1_000_000) return@launch

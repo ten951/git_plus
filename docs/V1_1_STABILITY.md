@@ -37,3 +37,54 @@
 阶段 4：253全量27测试通过（JUnit XML：27 tests，0 failures，0 errors）。同一revision复用提交对象，解析每256行检查取消；异步查询将Git及文件检查放在IO、porcelain解析放在Default。新增对象身份复用、解析中途取消测试。构建期间存在较长墙钟延迟，不作为性能测量。
 
 阶段 5：新增3项真实Git混合换行回归，修复前3项均因错误归属失败；修复后253全量30测试通过（12s）。归一化内容未变时直接使用磁盘字节；未保存编辑通过平台行diff保留未改行的分隔符，改动行使用编辑器默认分隔符。覆盖插入、删除、替换、重复行、BOM、GBK、无末尾换行，并验证磁盘原文不变。读取最多8MB，diff超过平台限制时省略结果而不猜测归属；读取/Git在IO，diff/解析在Default。
+
+## 阶段 6：最终回归与验收限制（2026-10-15）
+
+独立审查覆盖 `14fd064..01f8bef`。确认隐藏编辑器的document/caret回调仍可绕过延迟查询：扩展真实平台测试后先失败，再在schedule入口及延迟结束后统一检查可见性，deactivate取消隐藏请求并保留dirty；可见split继续查询。补充最后一个消费者取消、下一次相同请求重启测试。
+
+最终EAP编译另发现阶段2引入的GitRepositoryManager父类位于DVCS impl模块；检查253/263实际jar后增加`intellij.platform.vcs.dvcs.impl`显式构建依赖。此修复计入最终集成提交，不重写前五阶段历史。
+
+| 实际命令与环境 | 结果 |
+| --- | --- |
+| JDK21，`./gradlew cleanTest test buildPlugin verifyPluginStructure --no-configuration-cache --offline`，253.33813.55 | 成功，31测试，0失败/错误，16s |
+| JBR25，`./gradlew test buildPlugin verifyPluginStructure -PlocalIdePath="/Users/didi/Applications/IntelliJ IDEA.app/Contents" --no-configuration-cache --offline`，263.6800.24 | 成功，31测试，0失败/错误，15s |
+| Verifier 1.410，同一253构建包对253.33813.55，offline | Compatible；报告在`build/reports/v11-verifier-253` |
+| Verifier 1.410，253构建包对263.6800.24，offline | **未通过**：1项compatibility problem，未解析Repository与AbstractRepositoryManager；不能写成Compatible |
+| `runIde`，263.6800.24，隔离沙箱+`build/eap-smoke`仓库 | 实际进程启动、插件加载、测试项目打开；**界面行为未验收** |
+
+两次测试的JUnit XML分别保存在本地`build/reports/v11-253-junit`和`build/reports/v11-eap-junit`。对应构建日志为`build/stage6-253-final.log`和`build/stage6-eap-final.log`。SDK编译及平台测试不等于EAP真实界面验证，远程CI未运行。
+
+EAP实际运行：首次offline启动缺少Compose hot-reload代理，联网下载后启动成功。沙箱日志`.intellijPlatform/sandbox/git_plus/IU-2026.3/log_runIde/idea.log`记录加载Git Plus 0.0.1并打开eap-smoke项目；采样期间未发现本插件ERROR。UI工具能枚举该JBR进程，却无法通过bundle ID、显示名或运行时路径连接沙箱窗口，因此没有观察到行尾文字、光标移动或未提交提示，不以主IDE窗口冒充沙箱验证。
+
+263静态问题仍待核实：SDK真实jar中存在上述两个类，Git后端模块也声明了DVCS模块依赖；Verifier却将这些依赖解析为product module并报告缺类，同时报告大量SDK layout路径缺失。这提示SDK模块布局/Verifier解析差异，但尚未证明只是工具误报。保留报告`build/reports/v11-verifier`，不屏蔽告警、不为消除告警修改SDK或降低兼容声明。
+
+### 性能对比
+
+可复现探针为`tools/benchmark_blame.py`及`tools/BlameBenchmark.java`。先构建classes，再执行：
+
+```sh
+python3 tools/benchmark_blame.py \
+  --ide '/Users/didi/Applications/IntelliJ IDEA.app/Contents' \
+  --java-home '/Users/didi/Applications/IntelliJ IDEA.app/Contents/jbr/Contents/Home'
+```
+
+原始样本保存在[benchmarks/v1_1.json](benchmarks/v1_1.json)。探针在build临时目录编译归档V1 Provider，不切换当前分支；两个版本使用相同完整依赖classpath、JBR25、512m堆、40,000行单提交文件，各3个独立JVM。计时不包含采样前后GC等待；保留堆是GC后估算，包含类加载开销，不能视为IDE整体内存。该统一classpath测量替代上方早期基线，二者内存数据不能混用。
+
+| 指标 | V1 | V1.1 |
+| --- | --- | --- |
+| 冷查询ms，3次 | 2954 / 3098 / 3502 | 2835 / 2874 / 3582 |
+| 20次暖查询ms，3次 | 542 / 622 / 686 | 16 / 55 / 10 |
+| 保留堆增量中位数 | 36,641,984 bytes | 25,911,464 bytes |
+| 同一revision的提交对象 | 40,000 | 1 |
+| 冷Git进程 | 4 | 6 |
+| 20次暖查询Git进程，3次 | 40 / 40 / 40 | 0 / 3 / 0 |
+
+暖查询中位数约减少97%，保留堆估算约减少29%；冷查询仍有明显波动，初次仓库定位多2个进程，不宣称冷启动有稳定加速。一次暖测出现3次重新定位，原因未单独追踪，不能把全部样本描述为零进程；稳定未变仓库的10次暖查询零进程确定性测试已通过。探针范围仅为Provider，不代表编辑器端到端延迟。
+
+### 待验收与已知风险
+
+- **尚未全部完成验收**：EAP行尾渲染/移动/编辑/关闭的界面验证，以及263 Verifier缺类报告的最终定性。
+- 审查低优先级风险：VFS正常事件覆盖mailmap/attributes，但Provider fingerprint不含这些辅助文件；若事件丢失，60秒HEAD重查仍可能复用旧归属。此条件性风险保留后续处理，没有宣称事件遗漏时也保证新鲜。
+- 最后消费者取消的测试缺口已补齐；未发现需要新增Hover/Diff架构的理由。
+
+所有变更仅本地提交，无push，没有修改用户现有Git配置。测试身份配置仅在隔离临时仓库内使用，新增探针以单条Git命令参数提供身份。
