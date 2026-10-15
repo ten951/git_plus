@@ -21,3 +21,5 @@
 阶段1：新增mailmap、attributes漏事件和.git目录mtime三项回归，修复前全部失败。其余结果随执行补齐。
 
 阶段1完成：253全量36测试通过（14s），增加真实linked worktree、独立HEAD/index、detached HEAD、packed refs和在途失效不回填测试。attributes按真实目录识别macOS路径别名；定位标记止于最近的.git，目录仅检查身份，文件指针保留mtime/size检查。
+
+阶段2完成：253全量39测试通过（19s）。提交说明按common Git目录+完整revision获取，复用消费者计数协调器，10次相同详情仅1个Git进程；取消一个消费者不影响另一个。消息缓存最多128项/100万字符，单说明超过128000字符明确按加载失败处理而不静默截断。支持按仓库失效与generation拒绝旧回填；非法revision不执行Git。

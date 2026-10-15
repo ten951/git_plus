@@ -12,11 +12,16 @@ data class BlameRequest(val file: Path, val content: String, val charset: Charse
 /** Shared work belongs to the service, not the first editor; cancel when the last consumer leaves. */
 class BlameQueryCoordinator(private val scope: CoroutineScope,
                             private val load: suspend (BlameRequest) -> Map<Int, BlameLine>) {
-    private class Flight(val result: Deferred<Map<Int, BlameLine>>, var consumers: Int = 0)
-    private val mutex = Mutex()
-    private val flights = mutableMapOf<BlameRequest, Flight>()
+    private val shared = SharedQueryCoordinator(scope, load)
+    suspend fun query(request: BlameRequest): Map<Int, BlameLine> = shared.query(request)
+}
 
-    suspend fun query(request: BlameRequest): Map<Int, BlameLine> {
+internal class SharedQueryCoordinator<K : Any, V>(private val scope: CoroutineScope, private val load: suspend (K) -> V) {
+    private class Flight<V>(val result: Deferred<V>, var consumers: Int = 0)
+    private val mutex = Mutex()
+    private val flights = mutableMapOf<K, Flight<V>>()
+
+    suspend fun query(request: K): V {
         val flight = mutex.withLock {
             flights.getOrPut(request) { Flight(scope.async(Dispatchers.Default) { load(request) }) }.also { it.consumers++ }
         }
