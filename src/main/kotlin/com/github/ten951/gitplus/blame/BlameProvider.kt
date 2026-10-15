@@ -3,10 +3,11 @@ package com.github.ten951.gitplus.blame
 import java.io.IOException
 import java.nio.charset.Charset
 import java.nio.file.Path
-import java.time.Instant
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Project-shared bounded snapshots; no editor ownership or UI operations. */
 class BlameProvider(private val executable: String = "git", private val onFailure: (String) -> Unit = {}) {
@@ -30,74 +31,63 @@ class BlameProvider(private val executable: String = "git", private val onFailur
         repositories.clear()
     }
 
-    fun query(file: Path, content: String, charset: Charset = Charsets.UTF_8, lineSeparator: String = "\n",
-              bom: ByteArray? = null, checkCanceled: () -> Unit = {}): Map<Int, BlameLine> {
-        if (content.isEmpty() || content.length > 1_000_000 || '\u0000' in content) return emptyMap()
-        checkCanceled()
-        return try {
-            val path = file.toAbsolutePath().normalize()
-            val directory = path.parent ?: return emptyMap()
-            val generation = generationOf(path)
-            val state = repositories.state(directory, checkCanceled) ?: return emptyMap()
-            val key = CacheKey(path, state.head, state.fingerprint, fileSignature(path), content, charset, lineSeparator, bom?.toList().orEmpty(), generation)
-            synchronized(cache) { cache[key] }?.let { return it }
-            val tracked = runner.run(directory, listOf("--literal-pathspecs", "ls-files", "--error-unmatch", "--", path.fileName.toString()), checkCanceled = checkCanceled)
-                ?: return emptyMap()
-            if (tracked.isEmpty()) return emptyMap()
-            val encoded = content.replace("\n", lineSeparator).toByteArray(charset)
-            val bytes = if (bom != null && !encoded.take(bom.size).toByteArray().contentEquals(bom)) bom + encoded else encoded
-            val output = runner.run(directory, listOf("-c", "blame.blankBoundary=false", "-c", "blame.ignoreRevsFile=",
-                "-c", "i18n.logOutputEncoding=UTF-8", "blame", "--line-porcelain", "--encoding=UTF-8",
-                "--contents", "-", "--", path.fileName.toString()), bytes, checkCanceled) ?: return emptyMap()
-            val result = parseBlame(output)
-            checkCanceled()
-            if (!repositories.isCurrent(state) || fileSignature(path) != key.disk) return emptyMap()
-            synchronized(cache) {
-                if (generationOf(path) != generation) throw CancellationException("Blame snapshot invalidated")
-                if (result.size <= 100_000) {
-                    cache.keys.removeIf { it.file == path }
-                    cache[key] = result
-                    while (cache.size > 16 || cache.values.sumOf { it.size } > 100_000) cache.remove(cache.keys.first())
-                }
-            }
-            result
-        } catch (exception: IOException) {
-            onFailure(exception.message.orEmpty())
-            emptyMap()
-        }
-    }
-}
+    private sealed interface Prepared
+    private class Cached(val result: Map<Int, BlameLine>) : Prepared
+    private class Raw(val key: CacheKey, val state: RepositoryStateCache.State, val output: String) : Prepared
 
-internal fun parseBlame(output: String): Map<Int, BlameLine> {
-    val result = mutableMapOf<Int, BlameLine>()
-    var revision = ""
-    var lineNumber = -1
-    var author = ""
-    var time: Instant? = null
-    var summary = ""
-    for (line in output.lineSequence()) {
-        when {
-            line.startsWith('\t') -> {
-                if (lineNumber >= 0) {
-                    if (revision.all { it == '0' }) result[lineNumber] = BlameLine(uncommitted = true)
-                    else if (time != null) result[lineNumber] = BlameLine(BlameCommit(revision, author, time, summary))
-                }
-                lineNumber = -1
-            }
-            line.startsWith("author ") -> author = line.removePrefix("author ")
-            line.startsWith("committer-time ") -> time = line.removePrefix("committer-time ").toLongOrNull()?.let(Instant::ofEpochSecond)
-            line.startsWith("summary ") -> summary = line.removePrefix("summary ")
-            else -> {
-                val parts = line.split(' ')
-                if (parts.size >= 3 && parts[0].length in listOf(40, 64) && parts[0].all { it in "0123456789abcdef" }) {
-                    revision = parts[0]
-                    lineNumber = (parts[2].toIntOrNull() ?: 0) - 1
-                    author = ""
-                    time = null
-                    summary = ""
-                }
+    fun query(file: Path, content: String, charset: Charset = Charsets.UTF_8, lineSeparator: String = "\n",
+              bom: ByteArray? = null, checkCanceled: () -> Unit = {}): Map<Int, BlameLine> = try {
+        when (val prepared = prepare(file, content, charset, lineSeparator, bom, checkCanceled)) {
+            is Cached -> prepared.result
+            is Raw -> finish(prepared, parseBlame(prepared.output, checkCanceled), checkCanceled)
+        }
+    } catch (exception: IOException) { onFailure(exception.message.orEmpty()); emptyMap() }
+
+    suspend fun queryAsync(request: BlameRequest, checkCanceled: () -> Unit): Map<Int, BlameLine> = try {
+        val prepared = withContext(Dispatchers.IO) {
+            prepare(request.file, request.content, request.charset, request.separator, request.bom.toByteArray(), checkCanceled)
+        }
+        when (prepared) {
+            is Cached -> prepared.result
+            is Raw -> {
+                val parsed = withContext(Dispatchers.Default) { parseBlame(prepared.output, checkCanceled) }
+                withContext(Dispatchers.IO) { finish(prepared, parsed, checkCanceled) }
             }
         }
+    } catch (exception: IOException) { onFailure(exception.message.orEmpty()); emptyMap() }
+
+    private fun prepare(file: Path, content: String, charset: Charset, lineSeparator: String,
+                        bom: ByteArray?, checkCanceled: () -> Unit): Prepared {
+        checkCanceled()
+        if (content.isEmpty() || content.length > 1_000_000 || '\u0000' in content) return Cached(emptyMap())
+        val path = file.toAbsolutePath().normalize()
+        val directory = path.parent ?: return Cached(emptyMap())
+        val generation = generationOf(path)
+        val state = repositories.state(directory, checkCanceled) ?: return Cached(emptyMap())
+        val key = CacheKey(path, state.head, state.fingerprint, fileSignature(path), content, charset, lineSeparator, bom?.toList().orEmpty(), generation)
+        synchronized(cache) { cache[key] }?.let { return Cached(it) }
+        val tracked = runner.run(directory, listOf("--literal-pathspecs", "ls-files", "--error-unmatch", "--", path.fileName.toString()), checkCanceled = checkCanceled)
+            ?: return Cached(emptyMap())
+        if (tracked.isEmpty()) return Cached(emptyMap())
+        val encoded = content.replace("\n", lineSeparator).toByteArray(charset)
+        val bytes = if (bom != null && !encoded.take(bom.size).toByteArray().contentEquals(bom)) bom + encoded else encoded
+        val output = runner.run(directory, listOf("-c", "blame.blankBoundary=false", "-c", "blame.ignoreRevsFile=",
+            "-c", "i18n.logOutputEncoding=UTF-8", "blame", "--line-porcelain", "--encoding=UTF-8",
+            "--contents", "-", "--", path.fileName.toString()), bytes, checkCanceled) ?: return Cached(emptyMap())
+        return Raw(key, state, output)
     }
-    return result
+
+    private fun finish(raw: Raw, result: Map<Int, BlameLine>, checkCanceled: () -> Unit): Map<Int, BlameLine> {
+        checkCanceled()
+        if (!repositories.isCurrent(raw.state) || fileSignature(raw.key.file) != raw.key.disk) return emptyMap()
+        synchronized(cache) {
+            if (generationOf(raw.key.file) != raw.key.generation) throw CancellationException("Blame snapshot invalidated")
+            if (result.size <= 100_000) {
+                cache.keys.removeIf { it.file == raw.key.file }
+                cache[raw.key] = result
+                while (cache.size > 16 || cache.values.sumOf { it.size } > 100_000) cache.remove(cache.keys.first())
+            }
+        }
+        return result
+    }
 }

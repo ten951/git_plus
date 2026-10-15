@@ -52,10 +52,8 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         val provider = BlameProvider(executable) { LOG.debug(it) }
         QuerySource(provider, BlameQueryCoordinator(scope) { request ->
             val job = kotlinx.coroutines.currentCoroutineContext()[Job]!!
-            withContext(Dispatchers.IO) {
-                if (provider.generationOf(request.file) != request.generation) throw CancellationException("Snapshot invalidated")
-                provider.query(request.file, request.content, request.charset, request.separator, request.bom.toByteArray()) { job.ensureActive() }
-            }
+            if (provider.generationOf(request.file) != request.generation) throw CancellationException("Snapshot invalidated")
+            provider.queryAsync(request) { job.ensureActive() }
         })
     }
 
