@@ -22,10 +22,10 @@ class CommitDiffLoaderTest : BasePlatformTestCase() {
         Disposer.register(testRootDisposable, com.intellij.openapi.Disposable { directory.toFile().deleteRecursively() })
         git("init", "-q", "-b", "main")
         root = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(directory)!!
-        ProjectLevelVcsManager.getInstance(project).directoryMappings = listOf(VcsDirectoryMapping(directory.toString(), "Git"))
+        ProjectLevelVcsManager.getInstance(project).setDirectoryMappings(listOf(VcsDirectoryMapping(directory.toString(), "Git")))
     }
     override fun tearDown() {
-        try { ProjectLevelVcsManager.getInstance(project).directoryMappings = emptyList() }
+        try { ProjectLevelVcsManager.getInstance(project).setDirectoryMappings(emptyList()) }
         finally { super.tearDown() }
     }
 
@@ -49,6 +49,14 @@ class CommitDiffLoaderTest : BasePlatformTestCase() {
         assertEquals(revision, change.afterRevision!!.revisionNumber.asString())
         assertEquals("old\n", content(change.beforeRevision!!))
         assertEquals("new\n", content(change.afterRevision!!))
+        val native = runBlocking(Dispatchers.IO) {
+            // The light fixture's temp:// project directory cannot supply native editor-tab path titles.
+            // Exercise the same native content factory without those window title customizers.
+            com.intellij.openapi.vcs.changes.actions.diff.ChangeDiffRequestProducer.create(project, change)!!
+                .createSimpleRequest(project, change, com.intellij.openapi.util.UserDataHolderBase(), com.intellij.openapi.progress.EmptyProgressIndicator())
+        } as com.intellij.diff.requests.ContentDiffRequest
+        assertEquals("old\n", (native.contents[0] as com.intellij.diff.contents.DocumentContent).document.text)
+        assertEquals("new\n", (native.contents[1] as com.intellij.diff.contents.DocumentContent).document.text)
     }
 
     fun testRenamePreservesBothPathsAndHistoricalBlameCanOpenOldName() {
@@ -91,6 +99,17 @@ class CommitDiffLoaderTest : BasePlatformTestCase() {
         for ((sha, path) in listOf("f".repeat(40) to "source.txt", revision to "missing.txt")) {
             try { load(sha, path); fail("Unavailable diff must not silently open another file") }
             catch (_: VcsException) { }
+        }
+    }
+
+    fun testQuotedAndBackslashFilenamesKeepExactIdentity() {
+        val names = listOf("quote\"file.txt", "back\\slash.txt")
+        names.forEachIndexed { i, name -> write(name, "content $i\n") }
+        val revision = commit()
+        names.forEachIndexed { i, name ->
+            val change = load(revision, name)
+            assertEquals(directory.resolve(name).toString(), change.afterRevision!!.file.path)
+            assertEquals("content $i\n", content(change.afterRevision!!))
         }
     }
 

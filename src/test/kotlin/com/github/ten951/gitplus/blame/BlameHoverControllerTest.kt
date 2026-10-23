@@ -8,7 +8,7 @@ import kotlinx.coroutines.*
 import java.time.Instant
 
 class BlameHoverControllerTest : BasePlatformTestCase() {
-    private class View(var text: String, private val closed: () -> Unit) : CommitDetailsView {
+    private class View(var text: String, private val closed: () -> Unit, val onDiff: (() -> Unit)?) : CommitDetailsView {
         override var isDisposed = false
         override fun update(text: String) { this.text = text }
         override fun close() { isDisposed = true; closed() }
@@ -57,6 +57,7 @@ class BlameHoverControllerTest : BasePlatformTestCase() {
             waitUntil { views.isNotEmpty() }
             assertTrue(views.single().text.contains("尚未提交"))
             assertEquals(0, loads)
+            assertNull(views.single().onDiff)
             controller.dismiss()
             assertTrue(views.single().isDisposed)
             controller.hover(BlameHoverTarget(hints().single(), line))
@@ -116,7 +117,65 @@ class BlameHoverControllerTest : BasePlatformTestCase() {
         }
     }
 
-    private fun runHoverTest(load: suspend (BlameCommit) -> String? = { "摘要\n\n完整正文 <html> & 中文" },
+    fun testDiffClickClosesCardAndKeepsHistoricalTarget() {
+        val opened = mutableListOf<BlameHoverTarget>()
+        runHoverTest(openDiff = opened::add) { state, controller, views, _ ->
+            val line = BlameLine(BlameCommit("e".repeat(40), "author", Instant.now(), "subject"), pathAtCommit = "old name.txt")
+            state.publish(state.beginRequest(), line)
+            val target = BlameHoverTarget(hints().single(), line)
+            controller.hover(target)
+            waitUntil { views.isNotEmpty() }
+            val action = views.single().onDiff!!
+            action()
+            action() // A double click must not launch another request from a disposed card.
+            assertTrue(views.single().isDisposed)
+            assertEquals(1, opened.size)
+            assertSame(line, opened.single().line)
+            assertEquals("old name.txt", opened.single().line.pathAtCommit)
+        }
+    }
+
+    fun testClosingCardAfterClickDoesNotCancelTheDiffTask() {
+        var dispatch: (BlameHoverTarget) -> Unit = {}
+        runHoverTest(openDiff = { dispatch(it) }) { state, controller, views, scope ->
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            var shown = false
+            val diff = CommitDiffController(project, scope, testRootDisposable, load = {
+                entered.complete(Unit)
+                release.await()
+                com.intellij.openapi.vcs.changes.Change(null, com.intellij.openapi.vcs.changes.SimpleContentRevision(
+                    "old file", com.intellij.vcsUtil.VcsUtil.getFilePath("/tmp/old.txt"), "f".repeat(40)))
+            }, show = { shown = true })
+            dispatch = { target -> diff.open(CommitDiffRequest(myFixture.file.virtualFile.parent,
+                target.line.commit!!.revision, target.line.pathAtCommit!!)) }
+            val line = BlameLine(BlameCommit("f".repeat(40), "author", Instant.now(), "subject"), pathAtCommit = "old.txt")
+            state.publish(state.beginRequest(), line)
+            controller.hover(BlameHoverTarget(hints().single(), line))
+            waitUntil { views.isNotEmpty() }
+            views.single().onDiff!!()
+            assertTrue(views.single().isDisposed)
+            waitUntil { entered.isCompleted }
+            release.complete(Unit)
+            waitUntil { shown }
+        }
+    }
+
+    fun testInvalidatedCardCannotOpenAnOldDiff() {
+        val opened = mutableListOf<BlameHoverTarget>()
+        runHoverTest(openDiff = opened::add) { state, controller, views, _ ->
+            val line = BlameLine(BlameCommit("e".repeat(40), "author", Instant.now(), "subject"), pathAtCommit = "file.txt")
+            state.publish(state.beginRequest(), line)
+            controller.hover(BlameHoverTarget(hints().single(), line))
+            waitUntil { views.isNotEmpty() }
+            val action = views.single().onDiff!!
+            state.invalidate()
+            action()
+            assertTrue(opened.isEmpty())
+        }
+    }
+
+    private fun runHoverTest(openDiff: (BlameHoverTarget) -> Unit = {}, load: suspend (BlameCommit) -> String? = { "摘要\n\n完整正文 <html> & 中文" },
                              block: (EditorBlameState, BlameHoverController, MutableList<View>, CoroutineScope) -> Unit) {
         myFixture.configureByText("sample.txt", "code\nsecond\n")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -124,7 +183,7 @@ class BlameHoverControllerTest : BasePlatformTestCase() {
         var controller: BlameHoverController? = null
         val state = EditorBlameState(myFixture.editor, testRootDisposable, { controller?.dismiss() }) {}
         controller = BlameHoverController(myFixture.editor, state, scope, testRootDisposable, load,
-            { _, text, closed -> View(text, closed).also(views::add) })
+            { _, text, closed, onDiff -> View(text, closed, onDiff).also(views::add) }, openDiff = openDiff)
         try { block(state, controller, views, scope) } finally { Disposer.dispose(controller); scope.cancel() }
     }
 

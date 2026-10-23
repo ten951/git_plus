@@ -39,9 +39,10 @@ internal class BlameHoverController(
     private val scope: CoroutineScope,
     parent: Disposable,
     private val load: suspend (BlameCommit) -> String?,
-    private val openView: (BlameHoverTarget, String, () -> Unit) -> CommitDetailsView = { target, text, closed ->
-        openCommitDetails(editor, target, text, closed)
+    private val openView: (BlameHoverTarget, String, () -> Unit, (() -> Unit)?) -> CommitDetailsView = { target, text, closed, onDiff ->
+        openCommitDetails(editor, target, text, closed, onDiff)
     },
+    private val openDiff: (BlameHoverTarget) -> Unit = {},
 ) : Disposable {
     private var disposed = false
     private var epoch = 0L
@@ -78,7 +79,16 @@ internal class BlameHoverController(
             val header = commit?.let(::commitHeader)
             val initial = if (commit == null) "尚未提交\n当前行包含未提交的修改，没有对应提交详情。"
                 else "$header\n\n正在加载提交说明…"
-            val opened = openView(next, initial) { if (epoch == token) dismiss() }
+            val onDiff: (() -> Unit)? = if (commit != null && !next.line.uncommitted && !next.line.pathAtCommit.isNullOrEmpty()) {
+                {
+                    if (current(token, next)) {
+                        // The diff callback starts its own task, independent of the now-closed hover request.
+                        dismiss()
+                        openDiff(next)
+                    }
+                }
+            } else null
+            val opened = openView(next, initial, { if (epoch == token) dismiss() }, onDiff)
             if (!current(token, next) || opened.isDisposed) { opened.close(); return@launch }
             view = opened
             if (commit == null) return@launch
@@ -111,7 +121,7 @@ private fun commitHeader(commit: BlameCommit): String =
     "作者：${commit.author}\n提交时间：${DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault()).format(commit.committedAt)}\n提交：${commit.revision}"
 
 /** JTextArea deliberately treats commit messages as plain text, including any HTML-like content. */
-private fun openCommitDetails(editor: Editor, target: BlameHoverTarget, text: String, closed: () -> Unit): CommitDetailsView {
+private fun openCommitDetails(editor: Editor, target: BlameHoverTarget, text: String, closed: () -> Unit, onDiff: (() -> Unit)?): CommitDetailsView {
     val area = JTextArea(text).apply {
         isEditable = false
         lineWrap = true
@@ -123,8 +133,18 @@ private fun openCommitDetails(editor: Editor, target: BlameHoverTarget, text: St
         caretPosition = 0
     }
     val scroll = JBScrollPane(area).apply { preferredSize = Dimension(JBUI.scale(560), JBUI.scale(260)) }
+    val panel = javax.swing.JPanel(java.awt.BorderLayout()).apply {
+        add(scroll, java.awt.BorderLayout.CENTER)
+        if (onDiff != null) {
+            val button = javax.swing.JButton("查看此文件的提交 Diff").apply {
+                toolTipText = "比较该提交与第一父提交；首次提交与空文件比较"
+                addActionListener { onDiff() }
+            }
+            add(javax.swing.JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT)).apply { add(button) }, java.awt.BorderLayout.SOUTH)
+        }
+    }
     lateinit var popup: com.intellij.openapi.ui.popup.JBPopup
-    val builder = JBPopupFactory.getInstance().createComponentPopupBuilder(scroll, area)
+    val builder = JBPopupFactory.getInstance().createComponentPopupBuilder(panel, area)
         .setTitle("Git 提交详情").setProject(editor.project)
         .setRequestFocus(false).setFocusable(true).setResizable(true)
         .setCancelOnClickOutside(true).setCancelKeyEnabled(true)

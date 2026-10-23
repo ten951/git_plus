@@ -128,6 +128,7 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
         private var active = false
         private val state: EditorBlameState
         private var hover: BlameHoverController? = null
+        private val diff = CommitDiffController(project, scope, this)
         private val periodicRefresh: Job
 
         init {
@@ -138,6 +139,20 @@ class CurrentLineBlameService(private val project: Project, private val scope: C
                 val file = FileDocumentManager.getInstance().getFile(editor.document)
                 val repository = file?.let { selected?.provider?.repositoryPaths(Path.of(it.path)) }
                 if (selected != null && repository != null) selected.details.message(repository, commit.revision) else null
+            }, openDiff = { target ->
+                val commit = target.line.commit
+                val historicalPath = target.line.pathAtCommit
+                val file = FileDocumentManager.getInstance().getFile(editor.document)
+                val paths = file?.let { querySource?.provider?.repositoryPaths(Path.of(it.path)) }
+                val root = if (file != null && paths != null) {
+                    generateSequence(file) { it.parent }.firstOrNull { Path.of(it.path) == paths.root }
+                } else null
+                if (commit != null && historicalPath != null && root != null) {
+                    diff.open(CommitDiffRequest(root, commit.revision, historicalPath))
+                } else {
+                    com.intellij.openapi.vcs.VcsNotifier.getInstance(project).notifyWarning(
+                        "git.plus.commit.diff.unavailable", "Git Plus：无法打开提交 Diff", "文件或Git仓库已不可用，请重新定位代码行后重试。")
+                }
             })
             periodicRefresh = scope.launch(Dispatchers.EDT) {
                 while (isActive) {

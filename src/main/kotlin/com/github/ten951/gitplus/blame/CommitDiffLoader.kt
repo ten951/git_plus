@@ -20,7 +20,7 @@ internal class CommitDiffLoader(private val project: Project) {
         require(!relative.isAbsolute && request.pathAtCommit.isNotEmpty() && relative.none { it.toString() == ".." }) {
             "Commit Diff requires a repository-relative file path"
         }
-        val expected = Path.of(request.root.path).resolve(relative).normalize().toString().replace('\\', '/')
+        val expected = Path.of(request.root.path).resolve(relative).normalize().toString().replace(java.io.File.separatorChar, '/')
         ProgressManager.checkCanceled()
         // skipDiffsForMerge=true uses the --first-parent output already requested by Git4Idea.
         // revertable=false retains the real parent revision (null only for an initial addition).
