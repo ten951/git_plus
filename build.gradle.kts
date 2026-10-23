@@ -17,6 +17,11 @@ dependencies {
             useInstaller = !targetIde.get().startsWith("263.")
         }
         bundledPlugin("Git4Idea")
+        // 263 extracts the VCS API and native Diff action from the core IDE classpath.
+        bundledModule("intellij.platform.vcs.core")
+        bundledModule("intellij.platform.vcs.shared")
+        bundledModule("intellij.platform.vcs")
+        bundledModule("intellij.platform.vcs.impl")
         bundledModule("intellij.platform.vcs.dvcs")
         bundledModule("intellij.platform.vcs.dvcs.impl")
         testFramework(TestFrameworkType.Platform)

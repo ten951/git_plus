@@ -20,10 +20,12 @@ return result;  yangxingnong · 2026-10-10 11:30:05 · fix: 修复查询逻辑
 - 光标变化采用 150ms 防抖，Git 查询在后台执行，过期结果丢弃。
 - 鼠标在行尾提示停留 400ms，显示作者、完整时间、完整提交 SHA 和完整提交说明；可选择、复制和滚动。未提交行显示说明，不查询提交详情。
 - 鼠标移开、Escape、移动主光标到其他行、修改文档、滚动或关闭编辑器时关闭详情并取消后台任务。
+- 已提交行的卡片提供“查看此文件的提交 Diff”：在 IDEA 原生 Diff 中比较归属提交与第一父提交，首次提交与空文件比较。支持改名后的历史文件路径，不与当前未提交内容比较。
+- 点击后卡片关闭，Diff 独立后台加载；未提交行不提供入口。提交/父对象缺失（如浅克隆）或文件不可用时明确提示，不自动 fetch。
 
 ## 安装
 
-1. 下载或构建 `build/distributions/git_plus-1.2.0.zip`。
+1. 下载或构建 `build/distributions/git_plus-1.3.0.zip`。
 2. IDEA 的 Settings / Preferences → Plugins → 齿轮菜单 → Install Plugin from Disk，选择 ZIP。
 3. 按 IDEA 提示重启，打开 Git 仓库中已提交的代码文件，移动光标即可。
 
@@ -56,8 +58,10 @@ return result;  yangxingnong · 2026-10-10 11:30:05 · fix: 修复查询逻辑
 
 查询前还原文件的换行符和 BOM；新增、删除主光标会重新定位提示。可见编辑器每分钟重新检查提交状态和时间。
 
-当前不提供设置页或提交跳转（Commit Diff计划在V1.3实现）。超过 100 万字符的文档、超过 32 MB 的查询输出或单条命令耗时超过 15 秒时不显示提示，以限制后台资源使用。查询使用临时文件传递文档内容与输出，完成或取消后清理。
+当前不提供设置页或整提交文件列表。超过 100 万字符的文档、超过 32 MB 的查询输出或单条命令耗时超过 15 秒时不显示提示，以限制后台资源使用。查询使用临时文件传递文档内容与输出，完成或取消后清理。
 
 EAP 验证：用 JBR25 启动 Gradle，并传入 `-PlocalIdePath=/path/to/EAP/Contents`，或 `-PtargetIdeaVersion=263.6800.24`。目标 EAP 的编译/平台测试、静态 API 检查和实际 IDE 运行分别记录。
 
 V1.2实施及验证结果见 [docs/V1_2_IMPLEMENTATION.md](docs/V1_2_IMPLEMENTATION.md)。
+
+V1.3实现及验证结果见 [docs/V1_3_IMPLEMENTATION.md](docs/V1_3_IMPLEMENTATION.md)。

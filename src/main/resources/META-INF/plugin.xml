@@ -5,6 +5,7 @@
     <vendor>ten951</vendor>
     <description><![CDATA[
         <p>Show Git blame at the end of the current caret line: author, commit time and commit summary.</p>
+        <p>Hover for full commit details and open the file change in the native IDEA Diff viewer.</p>
         <p>Recent commits use relative time; commits older than three days show yyyy-MM-dd HH:mm:ss. Local changes show 尚未提交.</p>
     ]]></description>
 

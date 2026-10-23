@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-23
+### Added
+- Open the hovered file's commit diff in IDEA's native Diff viewer from its blame card.
+- Compare with the first parent, or empty content for an initial commit; preserve historical paths across renames.
+- Background loading independent of the card, disposal cancellation and explicit failure notifications.
+
 ## [1.2.0] - 2026-10-15
 ### Added
 - Native hover details for current-line blame: full author, local timestamp, SHA and commit message.
