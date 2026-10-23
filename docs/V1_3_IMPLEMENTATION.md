@@ -15,3 +15,5 @@ Ruling: 用户已明确跳过重复确认，直接执行本计划；沿用当前
 阶段1：新接口实现前编译RED（pathAtCommit/CommitDiffLoader缺失），实现后253全量52测试通过（32s）。真实Git覆盖首次提交空前版本、修改且工作区另有未保存内容、改名前后路径/历史Blame路径、merge第一父提交、缺失对象/文件及非法请求。普通修改/merge同时读取原生ContentRevision内容，确认没有与工作区比较。
 
 阶段2：卡片入口/独立控制器实现前RED（新增factory回调/Controller缺失）；完整59测试曾发现2项失败：Unix反斜杠文件名误转斜杠导致选不到Change，已改为仅转换当前系统分隔符；原生process路径标题读取LightFixture的temp://根失败，测试改用同一原生Producer的createSimpleRequest内容工厂（不更改生产展示路径）。最终253全量59测试通过（26s），含父提交/提交的原生左右Document内容、未提交无入口、失效/双击拒绝旧请求、关闭卡片不取消Diff、后台加载/EDT展示、释放取消、迟到结果拒绝和错误提示。
+
+独立审查发现并复现P1：浅克隆边界的git show隐藏真实父提交，原生Change误报首次添加。真实--depth 1克隆测试RED（不应展示空文件却接受了Change），修复后检查common Git shallow边界和raw commit父字段，明确提示历史不完整；真正root保留空前版本。审查者复核确认修复有效。最终253完整62测试（0失败/错误）、buildPlugin和verifyPluginStructure通过（26s）；另补真实root带shallow标记与linked worktree共享目录测试。

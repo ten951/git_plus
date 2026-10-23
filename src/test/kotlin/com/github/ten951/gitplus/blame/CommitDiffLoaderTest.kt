@@ -113,6 +113,53 @@ class CommitDiffLoaderTest : BasePlatformTestCase() {
         }
     }
 
+    fun testShallowBoundaryDoesNotMasqueradeAsAnInitialCommit() {
+        write("source.txt", "old\n")
+        commit()
+        write("source.txt", "new\n")
+        val revision = commit()
+        val shallow = Files.createTempDirectory(Path.of("build").toAbsolutePath(), "git-plus-shallow-")
+        Disposer.register(testRootDisposable, com.intellij.openapi.Disposable { shallow.toFile().deleteRecursively() })
+        git("clone", "--depth", "1", directory.toUri().toString(), shallow.toString())
+        val shallowRoot = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(shallow)!!
+        try {
+            runBlocking(Dispatchers.IO) { CommitDiffLoader(project).load(CommitDiffRequest(shallowRoot, revision, "source.txt")) }
+            fail("A missing real parent must not be shown as empty content")
+        } catch (expected: VcsException) {
+            assertTrue(expected.message.orEmpty().contains("浅克隆"))
+        }
+    }
+
+    fun testActualRootCommitRemainsValidWithShallowMarker() {
+        write("source.txt", "root content\n")
+        val revision = commit()
+        Files.writeString(directory.resolve(".git/shallow"), "$revision\n")
+        val change = load(revision, "source.txt")
+        assertNull(change.beforeRevision)
+        assertEquals("root content\n", content(change.afterRevision!!))
+    }
+
+    fun testLinkedWorktreeUsesItsOwnRootAndSharedMetadata() {
+        write("source.txt", "main content\n")
+        commit()
+        val linked = Files.createTempDirectory(Path.of("build").toAbsolutePath(), "git-plus-diff-worktree-")
+        Disposer.register(testRootDisposable, com.intellij.openapi.Disposable { linked.toFile().deleteRecursively() })
+        git("worktree", "add", "-b", "linked", linked.toString())
+        Files.writeString(linked.resolve("added.txt"), "linked content\n")
+        git("-C", linked.toString(), "add", "added.txt")
+        git("-C", linked.toString(), "-c", "user.name=Diff Test", "-c", "user.email=diff@example.invalid", "commit", "-qm", "linked addition")
+        val revision = git("-C", linked.toString(), "rev-parse", "HEAD").trim()
+        val linkedRoot = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(linked)!!
+        ProjectLevelVcsManager.getInstance(project).setDirectoryMappings(listOf(
+            VcsDirectoryMapping(directory.toString(), "Git"), VcsDirectoryMapping(linked.toString(), "Git")))
+        val change = runBlocking(Dispatchers.IO) {
+            CommitDiffLoader(project).load(CommitDiffRequest(linkedRoot, revision, "added.txt"))
+        }
+        assertNull(change.beforeRevision)
+        assertEquals(linked.resolve("added.txt").toString(), change.afterRevision!!.file.path)
+        assertEquals("linked content\n", content(change.afterRevision!!))
+    }
+
     fun testInvalidRevisionAndEscapingPathAreRejected() {
         for ((sha, path) in listOf("HEAD" to "file", "a".repeat(40) to "../escape", "a".repeat(40) to "/absolute")) {
             try { load(sha, path); fail("Unsafe request accepted") }
