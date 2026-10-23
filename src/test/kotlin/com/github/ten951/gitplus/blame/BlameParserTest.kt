@@ -22,4 +22,13 @@ class BlameParserTest {
             fail("Must propagate cancellation during parsing")
         } catch (_: CancellationException) { assertEquals(3, polls) }
     }
+
+    @Test fun keepsHistoricalPathsPerLineWithoutDuplicatingCommitMetadata() {
+        val raw = output(2).replaceFirst("filename file", "filename old name.kt")
+            .replace("filename file", "filename \"\\344\\270\\255\\346\\226\\207.kt\"")
+        val lines = parseBlame(raw)
+        assertEquals("old name.kt", lines[0]!!.pathAtCommit)
+        assertEquals("中文.kt", lines[1]!!.pathAtCommit)
+        assertSame(lines[0]!!.commit, lines[1]!!.commit)
+    }
 }

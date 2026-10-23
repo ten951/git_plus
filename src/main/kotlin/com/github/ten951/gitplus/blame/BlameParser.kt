@@ -11,6 +11,7 @@ internal fun parseBlame(output: String, checkCanceled: () -> Unit = {}): Map<Int
     var author = ""
     var time: Instant? = null
     var summary = ""
+    var filename: String? = null
     checkCanceled()
     for ((index, line) in output.lineSequence().withIndex()) {
         if (index % 256 == 0) checkCanceled()
@@ -19,8 +20,12 @@ internal fun parseBlame(output: String, checkCanceled: () -> Unit = {}): Map<Int
                 if (lineNumber >= 0) {
                     if (revision.all { it == '0' }) result[lineNumber] = uncommitted
                     else {
-                        val attribution = byRevision[revision] ?: time?.let {
-                            BlameLine(BlameCommit(revision, author, it, summary)).also { value -> byRevision[revision] = value }
+                        val cached = byRevision[revision]
+                        val attribution = if (cached != null) {
+                            if (cached.pathAtCommit == filename) cached else cached.copy(pathAtCommit = filename)
+                        } else time?.let {
+                            BlameLine(BlameCommit(revision, author, it, summary), pathAtCommit = filename)
+                                .also { value -> byRevision[revision] = value }
                         }
                         if (attribution != null) result[lineNumber] = attribution
                     }
@@ -30,6 +35,11 @@ internal fun parseBlame(output: String, checkCanceled: () -> Unit = {}): Map<Int
             line.startsWith("author ") -> if (revision !in byRevision) author = line.removePrefix("author ")
             line.startsWith("committer-time ") -> if (revision !in byRevision) time = line.removePrefix("committer-time ").toLongOrNull()?.let(Instant::ofEpochSecond)
             line.startsWith("summary ") -> if (revision !in byRevision) summary = line.removePrefix("summary ")
+            line.startsWith("filename ") -> {
+                val raw = line.removePrefix("filename ")
+                filename = try { if (raw.startsWith('"')) git4idea.GitUtil.unescapePath(raw) else raw }
+                catch (_: com.intellij.openapi.vcs.VcsException) { null }
+            }
             else -> {
                 val space = line.indexOf(' ')
                 if (space == 40 || space == 64) {
@@ -37,7 +47,7 @@ internal fun parseBlame(output: String, checkCanceled: () -> Unit = {}): Map<Int
                     if (parts.size >= 3 && parts[0].all { it in "0123456789abcdef" }) {
                         revision = parts[0]
                         lineNumber = (parts[2].toIntOrNull() ?: 0) - 1
-                        author = ""; time = null; summary = ""
+                        author = ""; time = null; summary = ""; filename = null
                     }
                 }
             }
