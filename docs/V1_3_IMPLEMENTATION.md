@@ -85,3 +85,40 @@ Linux GitHub Actions 的结果需以该修复提交对应的远端运行结果�
 `build/ci-installer-253-regression.log`、`build/ci-installer-263-online.log`；
 测试 XML 保存于 `build/ci-installer-253-test-results/` 和 `build/ci-installer-263-test-results/`。
 交付 ZIP 的 SHA-256 仍为 `21b4f2bc1c010d4e6d7ad9828565da299b3886f269be398cbcbef2bb7cd69c04`。
+
+## PR #4：修复合并提交测试的 Git 身份依赖（2026-10-26）
+
+运行 `40283992795` 对应提交 `e80412e27ef877c21050bbf6853d1ea2f1ffa333`。
+公开任务元数据与用户提供的两份日志确认：`Test` 和
+`Build and test fixed 2026.3 EAP` 均在 `CommitDiffLoaderTest.testMergeUsesFirstParent`
+失败，均为 62 个测试中 1 个失败。固定 EAP 已完成 SDK 获取、编译、打包和结构检查，
+不再是前一次 Maven SDK 解析失败。
+
+原因：测试的普通 `commit` 命令通过 `-c` 设置作者身份，但第 87 行的
+`merge --no-ff` 没有设置。合并也会创建提交，因而意外依赖了开发者的 Git 身份配置。
+隔离全局/系统配置、清除身份环境变量并禁止自动推断身份后，本机原测试失败，
+XML 明确记录 `Committer identity unknown` 和 `no email was given and auto-detection is disabled`。
+这补充了 CI 控制台只显示 `IllegalStateException` 的证据。
+
+修复仅涉及测试夹具：在该测试类的 Git 命令入口统一通过 `-c` 提供测试姓名和邮箱，
+覆盖普通提交、合并和 linked worktree；保留身份隔离，避免本机配置再次掩盖遗漏。
+命令失败时输出命令参数和 Git 错误文本。未修改用户 Git 配置、插件功能或 CI 门禁。
+
+实际验证（macOS，本次全部测试均实际执行，禁用构建缓存）：
+
+| 验证 | 结果 |
+| --- | --- |
+| 修复前，在隔离身份的环境运行 `testMergeUsesFirstParent` | 预期失败，1 测试、1 失败，确认缺少提交者身份；17s |
+| 默认 253 SDK / JDK21，`cleanTest check buildPlugin verifyPluginStructure --no-build-cache --no-configuration-cache --offline` | 成功，62 测试，0 失败、错误、跳过；30s |
+| 本地固定 263.6800.24 SDK / JBR25，`cleanTest test verifyPluginStructure -PlocalIdePath=... --no-build-cache --no-configuration-cache --offline` | 成功，62 测试，0 失败、错误、跳过；35s |
+
+日志保存在 `build/ci-merge-identity-red.log`、`build/ci-merge-identity-253.log`、
+`build/ci-merge-identity-263.log`。失败 XML 为 `build/ci-merge-identity-red.xml`，
+两套完整测试 XML 分别保存于 `build/ci-merge-identity-253-results/` 和
+`build/ci-merge-identity-263-results/`。重新执行打包后，交付 ZIP SHA-256 仍为
+`21b4f2bc1c010d4e6d7ad9828565da299b3886f269be398cbcbef2bb7cd69c04`。
+
+EAP 日志中的 Kotlin 模块描述符 `ClosedFileSystemException` 属于构建工具读取 SDK
+时的非阻断诊断；之后的编译、打包、结构检查仍执行成功，最终任务失败明确发生在测试。
+本次未升级构建工具来处理该诊断，也未重跑 GUI 或 Verifier。
+以上是本地验证结果，Linux GitHub Actions 是否通过仍需以推送修复后的新运行结果为准。

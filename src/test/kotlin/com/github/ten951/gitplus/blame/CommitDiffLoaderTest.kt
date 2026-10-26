@@ -147,7 +147,7 @@ class CommitDiffLoaderTest : BasePlatformTestCase() {
         git("worktree", "add", "-b", "linked", linked.toString())
         Files.writeString(linked.resolve("added.txt"), "linked content\n")
         git("-C", linked.toString(), "add", "added.txt")
-        git("-C", linked.toString(), "-c", "user.name=Diff Test", "-c", "user.email=diff@example.invalid", "commit", "-qm", "linked addition")
+        git("-C", linked.toString(), "commit", "-qm", "linked addition")
         val revision = git("-C", linked.toString(), "rev-parse", "HEAD").trim()
         val linkedRoot = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(linked)!!
         ProjectLevelVcsManager.getInstance(project).setDirectoryMappings(listOf(
@@ -174,13 +174,26 @@ class CommitDiffLoaderTest : BasePlatformTestCase() {
     private fun write(path: String, content: String) { Files.writeString(directory.resolve(path), content) }
     private fun commit(): String {
         git("add", "--all")
-        git("-c", "user.name=Diff Test", "-c", "user.email=diff@example.invalid", "commit", "-qm", "test change")
+        git("commit", "-qm", "test change")
         return git("rev-parse", "HEAD").trim()
     }
     private fun git(vararg args: String): String {
-        val process = ProcessBuilder(listOf("git", "-C", directory.toString()) + args).redirectErrorStream(true).start()
+        val builder = ProcessBuilder(listOf(
+            "git", "-c", "user.useConfigOnly=true",
+            "-c", "user.name=Diff Test", "-c", "user.email=diff@example.invalid",
+            "-C", directory.toString(),
+        ) + args)
+            .redirectErrorStream(true)
+        // Fixture commits must work on CI without inheriting the developer's Git identity.
+        builder.environment().apply {
+            put("GIT_CONFIG_GLOBAL", directory.resolve("no-global-config").toString())
+            put("GIT_CONFIG_NOSYSTEM", "1")
+            listOf("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL")
+                .forEach { remove(it) }
+        }
+        val process = builder.start()
         val output = process.inputStream.bufferedReader().readText()
-        check(process.waitFor() == 0) { output }
+        check(process.waitFor() == 0) { "git ${args.joinToString(" ")} failed:\n$output" }
         return output
     }
 }
