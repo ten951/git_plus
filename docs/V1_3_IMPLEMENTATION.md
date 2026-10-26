@@ -54,3 +54,34 @@ SHA-256：`21b4f2bc1c010d4e6d7ad9828565da299b3886f269be398cbcbef2bb7cd69c04`。
 - 不新增设置页、整个Commit文件列表、远程提交网页或Marketplace发布；本次仅本地提交，不push/合并。
 
 收尾：按verification-before-completion与finishing-a-development-branch核对产物、实际测试/Verifier结果、原生界面及工作区。用户已要求无需重复确认，本次保留功能分支的本地分阶段提交，不提供额外合并菜单，不push。
+
+## PR #4：修复固定 EAP 的 CI 依赖解析（2026-10-26）
+
+GitHub Actions 的 EAP job 在执行测试前失败，无法找到
+`com.jetbrains.intellij.idea:idea:263.6800.24`。原因是构建脚本对 `263.*`
+强制设置 `useInstaller = false`，将固定构建号交给 Maven SDK 仓库解析。
+此前本机 EAP 验证使用 `localIdePath`，没有覆盖远程 SDK 获取路径。
+
+修复：远程 SDK 统一使用 `useInstaller = true`，保留本地 SDK 入口和固定
+`263.6800.24` 版本。未调整插件功能、Git 配置或 CI 检查门禁。
+
+本次实际验证：
+
+| 验证 | 结果 |
+| --- | --- |
+| 官方 Maven snapshot 仓库中的原坐标 POM | HTTP 404，与 CI 找不到依赖一致 |
+| JetBrains 产品目录 | 列出 IIU / 2026.3 / build 263.6800.24，以及 Linux、macOS 安装包地址 |
+| 官方 Linux 安装包 `https://download.jetbrains.com/idea/idea-263.6800.24.tar.gz` | HEAD 跟随重定向后 HTTP 200 |
+| Gradle `dependencies --configuration intellijPlatformDependencyArchive -PtargetIdeaVersion=263.6800.24` | 成功，解析为 `idea:idea:263.6800.24`，无 FAILED 标记 |
+| 默认 253 SDK / JDK21，`cleanTest test buildPlugin verifyPluginStructure --no-build-cache --no-configuration-cache --offline` | 成功，62 测试，0 失败、错误、跳过；25s |
+| 本地固定 263 SDK / JBR25，`cleanTest test verifyPluginStructure -PlocalIdePath=... --no-build-cache --no-configuration-cache` | 成功，62 测试，0 失败、错误、跳过；1m53s |
+
+EAP 首次离线检查因缺少 `test-framework` 缓存失败；使用命令级临时代理获取依赖后重跑成功。
+两次完整远程 SDK 解析尝试在等待期间主动中止；最终安装包依赖图验证成功，
+但未在本机完成一套全新远程 SDK 的下载、解包和测试，不将依赖图成功等同于完整 CI 成功。
+Linux GitHub Actions 的结果需以该修复提交对应的远端运行结果为准。本次未重跑 GUI 或 Verifier。
+
+本地日志：`build/ci-eap-installer-archive-resolution.log`、
+`build/ci-installer-253-regression.log`、`build/ci-installer-263-online.log`；
+测试 XML 保存于 `build/ci-installer-253-test-results/` 和 `build/ci-installer-263-test-results/`。
+交付 ZIP 的 SHA-256 仍为 `21b4f2bc1c010d4e6d7ad9828565da299b3886f269be398cbcbef2bb7cd69c04`。
