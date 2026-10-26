@@ -49,3 +49,9 @@ intellijPlatform {
 }
 
 kotlin { jvmToolchain(21) }
+
+tasks.processResources {
+    from("LICENSE") {
+        into("META-INF")
+    }
+}
