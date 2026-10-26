@@ -1,0 +1,69 @@
+{
+  "baseline": "14fd064",
+  "head": "f84589b21953dff30bfab526c484ba1abb8eb740",
+  "java": "Picked up _JAVA_OPTIONS: -DTEST_HOME_DIR=/Users/didi\nopenjdk version \"25.0.4.1\" 2026-08-18\nOpenJDK Runtime Environment JBR-25.0.4.1+1-635.70-nomod (build 25.0.4.1+1-b635.70)\nOpenJDK 64-Bit Server VM JBR-25.0.4.1+1-635.70-nomod (build 25.0.4.1+1-b635.70, mixed mode, sharing)",
+  "inputLines": 40000,
+  "heap": "512m",
+  "runs": [
+    {
+      "coldMs": 8299.684,
+      "warm20Ms": 693.688,
+      "retainedBytes": 36598288,
+      "commitObjects": 40000,
+      "coldProcesses": 4,
+      "warm20Processes": 40,
+      "revision": "V1",
+      "run": 1
+    },
+    {
+      "coldMs": 3619.757,
+      "warm20Ms": 12.421,
+      "retainedBytes": 26072328,
+      "commitObjects": 1,
+      "coldProcesses": 6,
+      "warm20Processes": 0,
+      "revision": "V1.2",
+      "run": 1
+    },
+    {
+      "coldMs": 3392.148,
+      "warm20Ms": 695.504,
+      "retainedBytes": 36618880,
+      "commitObjects": 40000,
+      "coldProcesses": 4,
+      "warm20Processes": 40,
+      "revision": "V1",
+      "run": 2
+    },
+    {
+      "coldMs": 3099.826,
+      "warm20Ms": 8.966,
+      "retainedBytes": 26010696,
+      "commitObjects": 1,
+      "coldProcesses": 6,
+      "warm20Processes": 0,
+      "revision": "V1.2",
+      "run": 2
+    },
+    {
+      "coldMs": 3301.673,
+      "warm20Ms": 677.59,
+      "retainedBytes": 36616992,
+      "commitObjects": 40000,
+      "coldProcesses": 4,
+      "warm20Processes": 40,
+      "revision": "V1",
+      "run": 3
+    },
+    {
+      "coldMs": 3227.108,
+      "warm20Ms": 7.209,
+      "retainedBytes": 26225056,
+      "commitObjects": 1,
+      "coldProcesses": 6,
+      "warm20Processes": 0,
+      "revision": "V1.2",
+      "run": 3
+    }
+  ]
+}

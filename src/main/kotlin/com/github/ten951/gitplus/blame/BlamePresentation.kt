@@ -10,7 +10,7 @@ data class BlameCommit(val revision: String, val author: String, val committedAt
         "${author.singleLine()} · ${formatCommitTime(committedAt, now, zone)} · ${summary.singleLine()}"
 }
 
-data class BlameLine(val commit: BlameCommit? = null, val uncommitted: Boolean = false) {
+data class BlameLine(val commit: BlameCommit? = null, val uncommitted: Boolean = false, val pathAtCommit: String? = null) {
     fun presentation(): String? = if (uncommitted) "尚未提交" else commit?.presentation()
 }
 

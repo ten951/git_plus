@@ -12,8 +12,23 @@ dependencies {
     // IntelliJ Platform Gradle Plugin Dependencies Extension - read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin-dependencies-extension.html
     intellijPlatform {
         val localIde = providers.gradleProperty("localIdePath")
-        if (localIde.isPresent) local(localIde.get()) else intellijIdea("2025.3.6.1")
+        val targetIde = providers.gradleProperty("targetIdeaVersion").orElse("2025.3.6.1")
+        if (localIde.isPresent) {
+            local(localIde.get())
+        } else {
+            intellijIdea(targetIde.get()) {
+                // Fixed EAP build numbers are available as installers, not necessarily Maven archives.
+                useInstaller = true
+            }
+        }
         bundledPlugin("Git4Idea")
+        // 263 extracts the VCS API and native Diff action from the core IDE classpath.
+        bundledModule("intellij.platform.vcs.core")
+        bundledModule("intellij.platform.vcs.shared")
+        bundledModule("intellij.platform.vcs")
+        bundledModule("intellij.platform.vcs.impl")
+        bundledModule("intellij.platform.vcs.dvcs")
+        bundledModule("intellij.platform.vcs.dvcs.impl")
         testFramework(TestFrameworkType.Platform)
     }
 }

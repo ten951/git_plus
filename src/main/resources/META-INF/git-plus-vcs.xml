@@ -1,0 +1,3 @@
+<!-- Explicit dependency on the VCS owner makes its public DVCS modules visible on 263.
+     Git4Idea remains required; no conditional extensions are needed here. -->
+<idea-plugin />

@@ -36,6 +36,11 @@ class CurrentLineBlameServiceTest : BasePlatformTestCase() {
         val service = project.service<CurrentLineBlameService>()
         try {
             service.start()
+            val textEditor = com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance().getTextEditor(editor)
+            project.messageBus.syncPublisher(com.intellij.openapi.fileEditor.FileEditorManagerListener.FILE_EDITOR_MANAGER)
+                .selectionChanged(com.intellij.openapi.fileEditor.FileEditorManagerEvent(
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project), null, null, null, file, textEditor,
+                    com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance()))
             waitForHint("integration author")
             editor.caretModel.moveToOffset(6)
             waitForHint("integration commit")
@@ -46,6 +51,22 @@ class CurrentLineBlameServiceTest : BasePlatformTestCase() {
             waitForHint("尚未提交")
             editor.caretModel.moveToOffset(0)
             waitForHint("integration author")
+            project.messageBus.syncPublisher(com.intellij.openapi.fileEditor.FileEditorManagerListener.FILE_EDITOR_MANAGER)
+                .selectionChanged(com.intellij.openapi.fileEditor.FileEditorManagerEvent(
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project), file, textEditor,
+                    com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance(), null, null, null))
+            WriteCommandAction.runWriteCommandAction(project) { editor.document.insertString(0, "hidden edit ") }
+            val hiddenDeadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(1)
+            while (System.nanoTime() < hiddenDeadline) {
+                UIUtil.dispatchAllInvocationEvents()
+                Thread.sleep(20)
+            }
+            assertNull("Hidden editor must defer querying and publishing until activated", hint())
+            project.messageBus.syncPublisher(com.intellij.openapi.fileEditor.FileEditorManagerListener.FILE_EDITOR_MANAGER)
+                .selectionChanged(com.intellij.openapi.fileEditor.FileEditorManagerEvent(
+                    com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project), null, null, null, file, textEditor,
+                    com.intellij.openapi.fileEditor.impl.text.TextEditorProvider.getInstance()))
+            waitForHint("尚未提交")
             assertEquals("first\nsecond\nthird\n", Files.readString(path))
         } finally {
             EditorFactory.getInstance().releaseEditor(editor)

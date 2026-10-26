@@ -9,7 +9,7 @@ import com.intellij.ui.JBColor
 import java.awt.Graphics2D
 import java.awt.geom.Rectangle2D
 
-class BlameInlayRenderer(val text: String) : EditorCustomElementRenderer {
+class BlameInlayRenderer(var text: String) : EditorCustomElementRenderer {
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val font = inlay.editor.colorsScheme.getFont(EditorFontType.PLAIN)
         return inlay.editor.contentComponent.getFontMetrics(font).stringWidth("  $text").coerceAtLeast(1)

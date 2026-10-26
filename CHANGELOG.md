@@ -3,6 +3,22 @@
 # git_plus Changelog
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-10-23
+### Added
+- Open the hovered file's commit diff in IDEA's native Diff viewer from its blame card.
+- Compare with the first parent, or empty content for an initial commit; preserve historical paths across renames.
+- Background loading independent of the card, disposal cancellation and explicit failure notifications.
+
+## [1.2.0] - 2026-10-15
+### Added
+- Native hover details for current-line blame: full author, local timestamp, SHA and commit message.
+- Background detail loading, shared requests, bounded caching and lifecycle cancellation.
+### Fixed
+- Detect mailmap and attributes changes even without a delivered VFS event.
+- Avoid redundant Git queries caused by .git directory timestamp changes.
+
+## [1.1.0]
 ### Added
 - Show Git blame author, commit time and summary at the end of the primary caret line.
 - Use relative time up to 72 hours and full local date/time for older commits.
